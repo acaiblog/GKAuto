@@ -3,23 +3,36 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 android {
-    namespace 'com.jiang.auto'
+    namespace 'com.acai.auto'
     compileSdk 34
     defaultConfig {
-        applicationId "com.jiang.auto"
+        applicationId "com.acai.auto"
         minSdk 21
         targetSdk 34
-        versionCode 9
-        versionName "1.0.9"
+        versionCode 11
+        versionName "1.1.1"
     }
     buildTypes {
         debug {
             minifyEnabled false
             debuggable true
+            signingConfig signingConfigs.debug
         }
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
+        }
+    }
+    signingConfigs {
+        debug {
+            def keystore = file("${System.getProperty('user.home')}/.android/debug.keystore")
+            storeFile keystore
+            storePassword "android"
+            keyAlias "AndroidDebugKey"
+            keyPassword "android"
+            v1SigningEnabled true
+            v2SigningEnabled false
         }
     }
     compileOptions {

@@ -4,290 +4,374 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="horizontal"
-    android:background="#F5F5F5">
+    android:background="#F0F2F5">
 
-    <!-- ===== 左侧功能区 ===== -->
-    <ScrollView
+    <!-- ===== 左侧功能区（权重 4，占 4/6 宽度） ===== -->
+    <LinearLayout
         android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:layout_weight="1">
+        android:layout_weight="4"
+        android:orientation="vertical">
 
-        <LinearLayout
+        <!-- 上部可滚动内容区（fillViewport=true 确保撑满可用高度） -->
+        <ScrollView
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="8dp">
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
 
-            <!-- 自动连接 + 开机自启 并排 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="6dp">
+                android:orientation="vertical"
+                android:padding="12dp">
 
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/swAutoConnect"
-                    android:layout_width="0dp"
+                <!-- ===== 蓝牙绑定 + 绑定应用/热点 并排 ===== -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="自动连接"
-                    android:textSize="13sp"
-                    android:padding="4dp"
-                    android:background="@android:color/white" />
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="10dp">
 
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/swBootStart"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="开机自启"
-                    android:textSize="13sp"
-                    android:padding="4dp"
-                    android:background="@android:color/white"
-                    android:layout_marginStart="6dp" />
-
-            </LinearLayout>
-
-            <!-- ===== 蓝牙绑定 + 绑定应用/热点 并排 ===== -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="6dp">
-
-                <!-- 蓝牙绑定 -->
-                <androidx.cardview.widget.CardView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    app:cardCornerRadius="6dp"
-                    app:cardElevation="1dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
+                    <!-- 蓝牙绑定 -->
+                    <androidx.cardview.widget.CardView
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:padding="10dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="📡 蓝牙"
-                            android:textSize="13sp"
-                            android:textStyle="bold"
-                            android:textColor="#333333"
-                            android:paddingBottom="3dp" />
-
-                        <TextView
-                            android:id="@+id/tvBleStatus"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="蓝牙未连接"
-                            android:textSize="11sp"
-                            android:textColor="#FF0000"
-                            android:paddingBottom="6dp" />
-
-                        <Button
-                            android:id="@+id/btnScan"
-                            android:layout_width="match_parent"
-                            android:layout_height="44dp"
-                            android:text="扫描设备"
-                            android:textSize="12sp"
-                            android:padding="0dp"
-                            android:minHeight="0dp" />
-
-                        <androidx.recyclerview.widget.RecyclerView
-                            android:id="@+id/rvDevices"
-                            android:layout_width="match_parent"
-                            android:layout_height="195dp"
-                            android:layout_marginTop="6dp"
-                            android:nestedScrollingEnabled="true" />
-
-                        <TextView
-                            android:id="@+id/tvBoundDevice"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="已绑定: 无"
-                            android:textSize="10sp"
-                            android:textColor="#666666"
-                            android:paddingTop="3dp" />
-
-                    </LinearLayout>
-                </androidx.cardview.widget.CardView>
-
-                <!-- 绑定应用 + WiFi 热点 -->
-                <androidx.cardview.widget.CardView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginStart="6dp"
-                    app:cardCornerRadius="6dp"
-                    app:cardElevation="1dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:padding="10dp">
-
-                        <!-- 绑定应用 -->
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="📱 绑定应用"
-                            android:textSize="13sp"
-                            android:textStyle="bold"
-                            android:textColor="#333333"
-                            android:paddingBottom="3dp" />
-
-                        <TextView
-                            android:id="@+id/tvBoundApp"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="未绑定"
-                            android:textSize="11sp"
-                            android:textColor="#666666"
-                            android:paddingBottom="4dp" />
+                        android:layout_weight="1"
+                        app:cardCornerRadius="8dp"
+                        app:cardElevation="2dp"
+                        app:cardBackgroundColor="@android:color/white">
 
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:orientation="horizontal">
+                            android:orientation="vertical"
+                            android:padding="14dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="📡 蓝牙连接"
+                                android:textSize="17sp"
+                                android:textStyle="bold"
+                                android:textColor="#1A1A1A"
+                                android:paddingBottom="6dp" />
+
+                            <TextView
+                                android:id="@+id/tvBleStatus"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="蓝牙未连接"
+                                android:textSize="14sp"
+                                android:textColor="#E53935"
+                                android:paddingBottom="10dp" />
 
                             <Button
-                                android:id="@+id/btnBindApp"
-                                android:layout_width="0dp"
-                                android:layout_height="40dp"
-                                android:layout_weight="1"
-                                android:text="选择应用"
-                                android:textSize="11sp"
+                                android:id="@+id/btnScan"
+                                android:layout_width="match_parent"
+                                android:layout_height="64dp"
+                                android:text="扫描设备"
+                                android:textSize="15sp"
                                 android:padding="0dp"
                                 android:minHeight="0dp" />
 
                             <Button
-                                android:id="@+id/btnClearApp"
-                                android:layout_width="0dp"
-                                android:layout_height="40dp"
-                                android:layout_weight="1"
-                                android:text="清除绑定"
-                                android:textSize="11sp"
-                                android:backgroundTint="#AAAAAA"
+                                android:id="@+id/btnBindBluetooth"
+                                android:layout_width="match_parent"
+                                android:layout_height="64dp"
+                                android:text="🔗 绑定蓝牙"
+                                android:textSize="15sp"
                                 android:padding="0dp"
                                 android:minHeight="0dp"
-                                android:layout_marginStart="4dp" />
+                                android:layout_marginTop="7dp" />
+
+                            <androidx.recyclerview.widget.RecyclerView
+                                android:id="@+id/rvDevices"
+                                android:layout_width="match_parent"
+                                android:layout_height="180dp"
+                                android:layout_marginTop="8dp"
+                                android:nestedScrollingEnabled="true" />
+
+                            <TextView
+                                android:id="@+id/tvBoundDevice"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="已绑定: 无"
+                                android:textSize="13sp"
+                                android:textColor="#757575"
+                                android:paddingTop="6dp" />
 
                         </LinearLayout>
+                    </androidx.cardview.widget.CardView>
 
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="蓝牙+热点就绪后自动启动"
-                            android:textSize="9sp"
-                            android:textColor="#999999"
-                            android:paddingTop="3dp"
-                            android:paddingBottom="0dp" />
-
-                        <!-- 分隔线 -->
-                        <View
-                            android:layout_width="match_parent"
-                            android:layout_height="1dp"
-                            android:background="#E0E0E0"
-                            android:layout_marginTop="13dp"
-                            android:layout_marginBottom="8dp" />
-
-                        <!-- WiFi 热点 -->
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="📶 WiFi 热点"
-                            android:textSize="13sp"
-                            android:textStyle="bold"
-                            android:textColor="#333333"
-                            android:paddingBottom="3dp" />
-
-                        <TextView
-                            android:id="@+id/tvApStatus"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="热点未开启"
-                            android:textSize="11sp"
-                            android:textColor="#FF0000"
-                            android:paddingBottom="4dp" />
-
-                        <EditText
-                            android:id="@+id/etApName"
-                            android:layout_width="match_parent"
-                            android:layout_height="44dp"
-                            android:hint="热点名称"
-                            android:text="GKAuto_Hotspot"
-                            android:textSize="11sp"
-                            android:inputType="text"
-                            android:singleLine="true"
-                            android:paddingStart="8dp"
-                            android:paddingEnd="8dp"
-                            android:background="@android:drawable/edit_text" />
+                    <!-- 绑定应用 + WiFi 热点 -->
+                    <androidx.cardview.widget.CardView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        app:cardCornerRadius="8dp"
+                        app:cardElevation="2dp"
+                        app:cardBackgroundColor="@android:color/white">
 
                         <LinearLayout
                             android:layout_width="match_parent"
-                            android:layout_height="44dp"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical">
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="14dp">
 
-                            <EditText
-                                android:id="@+id/etApPassword"
-                                android:layout_width="0dp"
-                                android:layout_height="match_parent"
-                                android:layout_weight="1"
-                                android:hint="密码(至少8位)"
-                                android:text="12345678"
-                                android:textSize="11sp"
-                                android:inputType="textPassword"
-                                android:singleLine="true"
-                                android:paddingStart="8dp"
-                                android:paddingEnd="4dp"
-                                android:background="@android:drawable/edit_text" />
+                            <!-- 绑定应用 -->
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="📱 绑定应用"
+                                android:textSize="17sp"
+                                android:textStyle="bold"
+                                android:textColor="#1A1A1A"
+                                android:paddingBottom="6dp" />
 
                             <TextView
-                                android:id="@+id/btnTogglePassword"
+                                android:id="@+id/tvBoundApp"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="未绑定"
+                                android:textSize="14sp"
+                                android:textColor="#757575"
+                                android:paddingBottom="8dp" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal">
+
+                                <Button
+                                    android:id="@+id/btnBindApp"
+                                    android:layout_width="0dp"
+                                    android:layout_height="64dp"
+                                    android:layout_weight="1"
+                                    android:text="选择应用"
+                                    android:textSize="14sp"
+                                    android:padding="0dp"
+                                    android:minHeight="0dp" />
+
+                                <Button
+                                    android:id="@+id/btnClearApp"
+                                    android:layout_width="0dp"
+                                    android:layout_height="64dp"
+                                    android:layout_weight="1"
+                                    android:text="清除绑定"
+                                    android:textSize="14sp"
+                                    android:backgroundTint="#AAAAAA"
+                                    android:padding="0dp"
+                                    android:minHeight="0dp"
+                                    android:layout_marginStart="7dp" />
+
+                            </LinearLayout>
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="蓝牙+热点就绪后自动启动"
+                                android:textSize="12sp"
+                                android:textColor="#AAAAAA"
+                                android:paddingTop="4dp" />
+
+                            <!-- 分隔线 -->
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:background="#EEEEEE"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="10dp" />
+
+                            <!-- WiFi 热点 -->
+                            <TextView
                                 android:layout_width="wrap_content"
-                                android:layout_height="match_parent"
-                                android:text="显示"
-                                android:textSize="11sp"
-                                android:textColor="#007AFF"
-                                android:gravity="center"
-                                android:paddingStart="8dp"
-                                android:paddingEnd="8dp"
-                                android:clickable="true" />
+                                android:layout_height="wrap_content"
+                                android:text="📶 WiFi 热点"
+                                android:textSize="17sp"
+                                android:textStyle="bold"
+                                android:textColor="#1A1A1A"
+                                android:paddingBottom="6dp" />
+
+                            <TextView
+                                android:id="@+id/tvApStatus"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="热点未开启"
+                                android:textSize="14sp"
+                                android:textColor="#E53935"
+                                android:paddingBottom="8dp" />
+
+                            <EditText
+                                android:id="@+id/etApName"
+                                android:layout_width="match_parent"
+                                android:layout_height="46dp"
+                                android:hint="热点名称"
+                                android:text="GKAuto_Hotspot"
+                                android:textSize="14sp"
+                                android:inputType="text"
+                                android:singleLine="true"
+                                android:paddingStart="10dp"
+                                android:paddingEnd="10dp"
+                                android:background="@android:drawable/edit_text" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="46dp"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical"
+                                android:layout_marginTop="6dp">
+
+                                <EditText
+                                    android:id="@+id/etApPassword"
+                                    android:layout_width="0dp"
+                                    android:layout_height="match_parent"
+                                    android:layout_weight="1"
+                                    android:hint="密码(至少8位)"
+                                    android:text="12345678"
+                                    android:textSize="14sp"
+                                    android:inputType="textPassword"
+                                    android:singleLine="true"
+                                    android:paddingStart="10dp"
+                                    android:paddingEnd="4dp"
+                                    android:background="@android:drawable/edit_text" />
+
+                                <TextView
+                                    android:id="@+id/btnTogglePassword"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="match_parent"
+                                    android:text="显示"
+                                    android:textSize="14sp"
+                                    android:textColor="#1976D2"
+                                    android:gravity="center"
+                                    android:paddingStart="10dp"
+                                    android:paddingEnd="10dp"
+                                    android:clickable="true" />
+
+                            </LinearLayout>
+
+                            <Button
+                                android:id="@+id/btnToggleAp"
+                                android:layout_width="match_parent"
+                                android:layout_height="64dp"
+                                android:text="开启热点"
+                                android:textSize="15sp"
+                                android:padding="0dp"
+                                android:minHeight="0dp"
+                                android:layout_marginTop="8dp" />
 
                         </LinearLayout>
+                    </androidx.cardview.widget.CardView>
 
-                        <Button
-                            android:id="@+id/btnToggleAp"
-                            android:layout_width="match_parent"
-                            android:layout_height="44dp"
-                            android:text="开启热点"
-                            android:textSize="12sp"
-                            android:padding="0dp"
-                            android:minHeight="0dp"
-                            android:layout_marginTop="6dp" />
+                </LinearLayout>
 
-                    </LinearLayout>
-                </androidx.cardview.widget.CardView>
+                <!-- 自动连接 + 开机自启 并排 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/swAutoConnect"
+                        android:layout_width="0dp"
+                        android:layout_height="57dp"
+                        android:layout_weight="1"
+                        android:text="自动连接"
+                        android:textSize="16sp"
+                        android:padding="8dp"
+                        android:background="@android:color/white" />
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/swBootStart"
+                        android:layout_width="0dp"
+                        android:layout_height="57dp"
+                        android:layout_weight="1"
+                        android:text="开机自启"
+                        android:textSize="16sp"
+                        android:padding="8dp"
+                        android:background="@android:color/white"
+                        android:layout_marginStart="10dp" />
+
+                </LinearLayout>
 
             </LinearLayout>
+        </ScrollView>
 
-            <!-- 底部留白 -->
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="16dp" />
+        <!-- 快捷操作按钮行（固定在底部，不随 ScrollView 滚动） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="80dp"
+            android:orientation="horizontal"
+            android:background="#F0F2F5"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="4dp"
+            android:paddingTop="4dp">
+
+            <Button
+                android:id="@+id/btnOpenAdb"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="🖥️ ADB调试"
+                android:textSize="14sp"
+                android:minHeight="0dp"
+                android:padding="0dp" />
+
+            <Button
+                android:id="@+id/btnOpenBluetooth"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="🔵 蓝牙设置"
+                android:textSize="14sp"
+                android:minHeight="0dp"
+                android:padding="0dp"
+                android:layout_marginStart="8dp" />
+
+            <Button
+                android:id="@+id/btnOpenHotspot"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="📶 热点设置"
+                android:textSize="14sp"
+                android:minHeight="0dp"
+                android:padding="0dp"
+                android:layout_marginStart="8dp" />
+
+            <Button
+                android:id="@+id/btnLaunchBoundApp"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="🚀 打开应用"
+                android:textSize="14sp"
+                android:minHeight="0dp"
+                android:padding="0dp"
+                android:layout_marginStart="8dp" />
+
+            <Button
+                android:id="@+id/btnReboot"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="🔄 重启车机"
+                android:textSize="14sp"
+                android:minHeight="0dp"
+                android:padding="0dp"
+                android:layout_marginStart="8dp" />
 
         </LinearLayout>
-    </ScrollView>
 
-    <!-- ===== 右侧日志面板 ===== -->
+    </LinearLayout>
+
+    <!-- ===== 右侧日志面板（权重 2，占 2/7 宽度） ===== -->
     <LinearLayout
-        android:layout_width="320dp"
+        android:layout_width="0dp"
         android:layout_height="match_parent"
+        android:layout_weight="2"
         android:orientation="vertical"
         android:background="@android:color/white">
 
@@ -297,9 +381,9 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:paddingTop="14dp"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:paddingBottom="8dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="10dp"
             android:gravity="center_vertical"
             android:background="#EEEEEE">
 
@@ -307,33 +391,39 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:orientation="vertical">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="GK Auto"
-                    android:textSize="15sp"
+                    android:textSize="16sp"
                     android:textStyle="bold"
-                    android:textColor="#333333" />
+                    android:textColor="#1A1A1A" />
 
-                <TextView
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="蓝牙绑定 · 热点管理 · 自动连接"
-                    android:textSize="9sp"
-                    android:textColor="#999999"
-                    android:layout_marginStart="8dp" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
-                <TextView
-                    android:id="@+id/tvVersion"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="v1.0.9"
-                    android:textSize="9sp"
-                    android:textColor="#BBBBBB"
-                    android:layout_marginStart="6dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="蓝牙 · 热点 · 自动连接"
+                        android:textSize="11sp"
+                        android:textColor="#999999" />
+
+                    <TextView
+                        android:id="@+id/tvVersion"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="v1.0.9"
+                        android:textSize="11sp"
+                        android:textColor="#BBBBBB"
+                        android:layout_marginStart="6dp" />
+
+                </LinearLayout>
 
             </LinearLayout>
 
@@ -342,9 +432,9 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="清除"
-                android:textSize="12sp"
-                android:textColor="#007AFF"
-                android:padding="4dp"
+                android:textSize="14sp"
+                android:textColor="#1976D2"
+                android:padding="6dp"
                 android:clickable="true" />
 
         </LinearLayout>

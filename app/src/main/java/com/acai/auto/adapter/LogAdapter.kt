@@ -1,4 +1,4 @@
-package com.jiang.auto.adapter
+package com.acai.auto.adapter
 
 import android.view.LayoutInflater
 import android.view.ViewGroup
@@ -28,7 +28,7 @@ class LogAdapter : RecyclerView.Adapter<LogAdapter.LogViewHolder>() {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): LogViewHolder {
         val view = LayoutInflater.from(parent.context)
-            .inflate(com.jiang.auto.R.layout.item_log, parent, false)
+            .inflate(com.acai.auto.R.layout.item_log, parent, false)
         return LogViewHolder(view)
     }
 
@@ -39,7 +39,7 @@ class LogAdapter : RecyclerView.Adapter<LogAdapter.LogViewHolder>() {
     override fun getItemCount(): Int = logs.size
 
     class LogViewHolder(view: android.view.View) : RecyclerView.ViewHolder(view) {
-        private val tvLog: android.widget.TextView = view.findViewById(com.jiang.auto.R.id.tvLogItem)
+        private val tvLog: android.widget.TextView = view.findViewById(com.acai.auto.R.id.tvLogItem)
 
         fun bind(log: String) {
             tvLog.text = log

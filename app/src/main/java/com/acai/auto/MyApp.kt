@@ -1,4 +1,4 @@
-package com.jiang.auto
+package com.acai.auto
 
 import android.app.Application
 import android.bluetooth.BluetoothAdapter

@@ -1,4 +1,4 @@
-package com.jiang.auto.adapter
+package com.acai.auto.adapter
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
@@ -7,8 +7,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import com.jiang.auto.MyApp
-import com.jiang.auto.R
+import com.acai.auto.MyApp
+import com.acai.auto.R
 
 /**
  * 蓝牙设备扫描结果列表适配器

@@ -1,10 +1,10 @@
-package com.jiang.auto.receiver
+package com.acai.auto.receiver
 
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import com.jiang.auto.MyApp
+import com.acai.auto.MyApp
 
 /**
  * WiFi 热点状态变化广播接收器
