@@ -32,7 +32,7 @@ android {
             keyAlias "AndroidDebugKey"
             keyPassword "android"
             v1SigningEnabled true
-            v2SigningEnabled false
+            v2SigningEnabled true
         }
     }
     compileOptions {

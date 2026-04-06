@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="10dp"
+    android:gravity="center_vertical"
+    android:background="?android:attr/selectableItemBackground">
+
+    <!-- WiFi图标 -->
+    <TextView
+        android:id="@+id/tvWifiIcon"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="📶"
+        android:textSize="20sp" />
+
+    <!-- WiFi名称 -->
+    <TextView
+        android:id="@+id/tvWifiName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="WiFi名称"
+        android:textSize="14sp"
+        android:textColor="#1A1A1A"
+        android:layout_marginStart="10dp" />
+
+    <!-- 信号强度 -->
+    <TextView
+        android:id="@+id/tvWifiSignal"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="-50 dBm"
+        android:textSize="12sp"
+        android:textColor="#757575"
+        android:layout_marginEnd="8dp" />
+
+    <!-- 加密标识 -->
+    <TextView
+        android:id="@+id/tvWifiSecure"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="🔒"
+        android:textSize="14sp" />
+
+</LinearLayout>

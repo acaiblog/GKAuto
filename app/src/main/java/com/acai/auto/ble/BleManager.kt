@@ -28,8 +28,9 @@ class BleManager private constructor() {
         val UUID_SPP: UUID = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
         val UUID_CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-        private const val MAX_RECONNECT_RETRIES = 3
-        private val RECONNECT_DELAYS = longArrayOf(5000, 10000, 20000)
+        // 指数退避重连配置
+        private const val MAX_RECONNECT_RETRIES = 5
+        private val RECONNECT_DELAYS = longArrayOf(1000, 2000, 4000, 8000, 16000) // 指数退避: 1s, 2s, 4s, 8s, 16s
         private const val HEALTH_CHECK_MISS_THRESHOLD = 2
         private const val HEALTH_CHECK_INTERVAL = 30000L
 
@@ -79,9 +80,16 @@ class BleManager private constructor() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var aclReceiver: android.content.BroadcastReceiver? = null
+    private var bondStateReceiver: android.content.BroadcastReceiver? = null
     private var healthCheckJob: Job? = null
     @Volatile
     private var healthCheckMissCount = 0
+
+    // 指数退避重连状态
+    @Volatile
+    private var reconnectAttempt = 0
+    private var reconnectJob: Job? = null
+    private var targetDeviceAddress: String? = null  // 重连目标设备地址
 
     fun init(context: Context) {
         val adapter = BluetoothAdapter.getDefaultAdapter()
@@ -92,6 +100,61 @@ class BleManager private constructor() {
             log("检测到 ECARX 车机系统，使用经典蓝牙模式")
         }
         registerGlobalAclListener()
+        registerBondStateListener()
+    }
+
+    /**
+     * 注册配对状态监听器
+     * 监听设备配对成功事件，配对成功后自动尝试连接
+     */
+    private fun registerBondStateListener() {
+        if (bondStateReceiver != null) return
+        bondStateReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                when (intent.action) {
+                    BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
+                        val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                        } ?: return
+
+                        val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
+                        when (bondState) {
+                            BluetoothDevice.BOND_BONDED -> {
+                                log("配对成功: ${device.name} (${device.address})，自动开始连接")
+                                // 配对成功后，延迟500ms开始连接，让系统完成配对状态的稳定
+                                scope.launch {
+                                    delay(500)
+                                    // 保存设备并记录为最后连接设备
+                                    MyApp.getInstance().saveDevice(device.address)
+                                    // 开始连接
+                                    connectWithAutoReconnect(device.address)
+                                }
+                            }
+                            BluetoothDevice.BOND_NONE -> {
+                                log("配对失败/已解除: ${device.name} (${device.address})")
+                                // 清除最后连接设备记录
+                                if (device.address == MyApp.getInstance().getLastConnectedDevice()) {
+                                    MyApp.getInstance().clearLastConnectedDevice()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        try {
+            val filter = android.content.IntentFilter().apply {
+                addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                MyApp.getInstance().registerReceiver(bondStateReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                MyApp.getInstance().registerReceiver(bondStateReceiver, filter)
+            }
+        } catch (_: Exception) {}
     }
 
     /**
@@ -152,7 +215,11 @@ class BleManager private constructor() {
                 addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
                 addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
             }
-            MyApp.getInstance().registerReceiver(aclReceiver, filter)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                MyApp.getInstance().registerReceiver(aclReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                MyApp.getInstance().registerReceiver(aclReceiver, filter)
+            }
         } catch (_: Exception) {}
     }
 
@@ -270,7 +337,11 @@ class BleManager private constructor() {
                 addAction(BluetoothDevice.ACTION_FOUND)
                 addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
             }
-            MyApp.getInstance().registerReceiver(classicReceiver, filter)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                MyApp.getInstance().registerReceiver(classicReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                MyApp.getInstance().registerReceiver(classicReceiver, filter)
+            }
         } catch (e: Exception) {
             logE("注册扫描广播接收器失败: ${e.message}")
         }
@@ -338,6 +409,10 @@ class BleManager private constructor() {
         autoConnectSavedDevices()
     }
 
+    /**
+     * 自动连接已保存的设备
+     * 优先连接上次成功的设备，然后按保存顺序尝试其他设备
+     */
     fun autoConnectSavedDevices(callback: ((Boolean) -> Unit)? = null) {
         val savedDevices = MyApp.getInstance().getSavedDevices()
         if (savedDevices.isEmpty()) {
@@ -349,20 +424,93 @@ class BleManager private constructor() {
         isAutoConnecting = true
 
         scope.launch {
-            var connected = false
+            // 优先尝试上次成功的设备
+            val lastDevice = MyApp.getInstance().getLastConnectedDevice()
+            if (lastDevice != null && lastDevice in savedDevices) {
+                log("优先连接上次成功的设备: $lastDevice")
+                var connected = suspendCancellableCoroutine { cont ->
+                    connectDevice(lastDevice) { success -> cont.resume(success) {} }
+                }
+                if (connected) {
+                    log("✅ 自动连接成功: $lastDevice")
+                    isAutoConnecting = false
+                    withContext(Dispatchers.Main) { callback?.invoke(true) }
+                    return@launch
+                }
+            }
+
+            // 尝试其他已保存的设备
             for (address in savedDevices) {
                 if (!isActive) break
+                if (address == lastDevice) continue  // 已经尝试过了
                 log("自动连接: $address")
-                connected = suspendCancellableCoroutine { cont ->
+                val connected = suspendCancellableCoroutine { cont ->
                     connectDevice(address) { success -> cont.resume(success) {} }
                 }
                 if (connected) { log("✅ 自动连接成功: $address"); break }
                 delay(2000)
             }
             isAutoConnecting = false
-            if (!connected) log("所有已保存设备连接失败")
-            withContext(Dispatchers.Main) { callback?.invoke(connected) }
+            if (!isConnected) log("所有已保存设备连接失败")
+            withContext(Dispatchers.Main) { callback?.invoke(isConnected) }
         }
+    }
+
+    /**
+     * 带指数退避的自动重连
+     * 断开后自动尝试重连，使用指数退避策略
+     */
+    private fun connectWithAutoReconnect(address: String) {
+        targetDeviceAddress = address
+        reconnectAttempt = 0
+        attemptReconnectInternal()
+    }
+
+    private fun attemptReconnectInternal() {
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            attemptReconnect()
+        }
+    }
+
+    private suspend fun attemptReconnect() {
+        val address = targetDeviceAddress ?: return
+
+        if (reconnectAttempt >= MAX_RECONNECT_RETRIES) {
+            log("已达到最大重连次数 ($MAX_RECONNECT_RETRIES)，停止自动重连")
+            reconnectAttempt = 0
+            return
+        }
+
+        val delayMs = RECONNECT_DELAYS.getOrElse(reconnectAttempt) { RECONNECT_DELAYS.last() }
+        reconnectAttempt++
+        log("尝试重连 ($reconnectAttempt/$MAX_RECONNECT_RETRIES)，等待 ${delayMs}ms...")
+
+        delay(delayMs)
+
+        if (_isConnected) return
+
+        val connected = suspendCancellableCoroutine { cont ->
+            connectDevice(address) { success -> cont.resume(success) {} }
+        }
+
+        if (connected) {
+            log("✅ 重连成功: $address")
+            reconnectAttempt = 0
+        } else {
+            // 重连失败，继续尝试（递归调用）
+            attemptReconnect()
+        }
+    }
+
+    /**
+     * 取消自动重连
+     */
+    fun cancelAutoReconnect() {
+        reconnectJob?.cancel()
+        reconnectJob = null
+        reconnectAttempt = 0
+        targetDeviceAddress = null
     }
 
     fun stopAutoConnect() {
@@ -400,6 +548,7 @@ class BleManager private constructor() {
     private fun tryGattConnect(device: BluetoothDevice, callback: ((Boolean) -> Unit)? = null) {
         log("GATT 连接中...")
         var timeoutJob: Job? = null
+        var hasTriggeredCallback = false
 
         val gattCallback = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -409,13 +558,35 @@ class BleManager private constructor() {
                         timeoutJob?.cancel()
                         bluetoothGatt = gatt
                         connectedDevice = device
+                        // 保存为最后连接设备
+                        MyApp.getInstance().setLastConnectedDevice(device.address)
+                        // 取消自动重连（因为已连接）
+                        cancelAutoReconnect()
                         // 延迟发现服务
                         scope.launch { delay(300); gatt.discoverServices() }
                     }
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         log("GATT 断开 status=$status")
                         timeoutJob?.cancel()
-                        if (!_isConnected) {
+
+                        if (_isConnected && connectedDevice?.address == device.address) {
+                            // 之前已连接过，现在断开，尝试自动重连
+                            log("检测到连接断开，尝试 GATT 自动重连...")
+                            // 等待一小段时间后尝试重连
+                            scope.launch {
+                                delay(1000)
+                                if (!_isConnected) {
+                                    try {
+                                        log("调用 gatt.connect() 尝试重连...")
+                                        gatt.connect()
+                                    } catch (e: Exception) {
+                                        logE("GATT 重连失败: ${e.message}，回退经典蓝牙...")
+                                        connectViaRfcomm(device, callback)
+                                    }
+                                }
+                            }
+                        } else if (!_isConnected) {
+                            // 从未连接过，回退经典蓝牙
                             log("GATT 失败，回退经典蓝牙...")
                             scope.launch { connectViaRfcomm(device, callback) }
                         }
@@ -483,6 +654,16 @@ class BleManager private constructor() {
     }
 
     private fun pairAndConnect(device: BluetoothDevice, callback: ((Boolean) -> Unit)? = null) {
+        // 检查是否已配对（可能通过配对状态监听器已触发）
+        if (device.bondState == BluetoothDevice.BOND_BONDED) {
+            log("设备已配对，直接开始连接")
+            // 使用指数退避重连
+            MyApp.getInstance().saveDevice(device.address)
+            connectWithAutoReconnect(device.address)
+            callback?.invoke(true)  // 立即返回，实际连接状态通过回调通知
+            return
+        }
+
         val bondReceiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 val state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1)
@@ -490,7 +671,10 @@ class BleManager private constructor() {
                     BluetoothDevice.BOND_BONDED -> {
                         log("配对成功")
                         try { MyApp.getInstance().unregisterReceiver(this) } catch (_: Exception) {}
-                        tryGattConnect(device, callback)
+                        // 不再直接调用 tryGattConnect，而是保存设备并使用指数退避重连
+                        MyApp.getInstance().saveDevice(device.address)
+                        connectWithAutoReconnect(device.address)
+                        callback?.invoke(true)
                     }
                     BluetoothDevice.BOND_NONE -> {
                         log("配对取消/失败")
@@ -501,7 +685,11 @@ class BleManager private constructor() {
             }
         }
         val filter = android.content.IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
-        MyApp.getInstance().registerReceiver(bondReceiver, filter)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            MyApp.getInstance().registerReceiver(bondReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            MyApp.getInstance().registerReceiver(bondReceiver, filter)
+        }
 
         log("正在配对 ${device.name ?: device.address}...")
         try { device.createBond() } catch (e: Exception) {
@@ -583,6 +771,10 @@ class BleManager private constructor() {
                 _isConnected = true
                 connectedDevice = device
                 isGattPrimaryConnection = false
+                // 保存为最后连接设备
+                MyApp.getInstance().setLastConnectedDevice(device.address)
+                // 取消自动重连（因为已连接）
+                cancelAutoReconnect()
                 startHealthCheck()
 
                 // 启动读取线程
@@ -677,6 +869,8 @@ class BleManager private constructor() {
     // ========== 断开连接 ==========
 
     fun disconnect() {
+        // 取消自动重连
+        cancelAutoReconnect()
         try { bluetoothGatt?.disconnect(); bluetoothGatt?.close() } catch (_: Exception) {}
         bluetoothGatt = null
         writeCharacteristic = null

@@ -5,31 +5,37 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.ScanResult
+import android.net.wifi.WifiConfiguration
+import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
+import android.net.wifi.WifiNetworkSuggestion
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.method.PasswordTransformationMethod
-import android.widget.EditText
+
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.acai.auto.MyApp
 import com.acai.auto.R
-import com.acai.auto.adapter.DeviceAdapter
 import com.acai.auto.adapter.LogAdapter
+import com.acai.auto.adapter.WifiAdapter
 import com.acai.auto.ble.BleAutoConnectService
 
 /**
@@ -39,11 +45,8 @@ import com.acai.auto.ble.BleAutoConnectService
 @SuppressLint("MissingPermission")
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var deviceAdapter: DeviceAdapter
     private lateinit var logAdapter: LogAdapter
     private var bluetoothAdapter: BluetoothAdapter? = null
-    private val scanResults = mutableListOf<BluetoothDevice>()
-    private var isScanning = false
     private var isBtConnected = false
     private val handler = Handler(Looper.getMainLooper())
     // 保存已配对的设备（用于快速绑定）
@@ -52,11 +55,93 @@ class MainActivity : AppCompatActivity() {
     // 日志 RecyclerView 引用
     private var logRecyclerView: androidx.recyclerview.widget.RecyclerView? = null
 
-    // 按钮引用（供广播接收器使用）
-    private var btnScan: android.widget.Button? = null
+    // WiFi 连接相关变量
+    private lateinit var wifiAdapter: WifiAdapter
+    private val wifiScanResults = mutableListOf<ScanResult>()
+    private var wifiManager: WifiManager? = null
+    private var selectedWifi: ScanResult? = null
+    private var isWifiConnected = false
+    private var isWifiConnecting = false
+    private var currentConnectedSsid = ""
 
-    // 标记是否在等待权限后重试扫描
-    private var pendingScanAfterPermission = false
+    // WiFi 连接回调
+    private val wifiConnectivityCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                super.onAvailable(network)
+                runOnUiThread {
+                    isWifiConnected = true
+                    isWifiConnecting = false
+                    updateWifiStatus()
+                    launchBoundAppOnWifiConnected()
+                }
+            }
+
+            override fun onLost(network: Network) {
+                super.onLost(network)
+                runOnUiThread {
+                    isWifiConnected = false
+                    isWifiConnecting = false
+                    updateWifiStatus()
+                }
+            }
+        }
+    } else null
+
+    // WiFi 扫描广播接收器
+    private val wifiScanReceiver = object : BroadcastReceiver() {
+        @SuppressLint("MissingPermission")
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
+                val success = intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false)
+                if (success) {
+                    appendLog("[WiFi] 扫描成功，找到 ${wifiScanResults.size} 个网络")
+                } else {
+                    appendLog("[WiFi] 扫描失败")
+                }
+                // 更新列表
+                wifiScanResults.clear()
+                wifiManager?.let {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        wifiScanResults.addAll(it.scanResults.filter { r -> r.SSID.isNotEmpty() })
+                    } else {
+                        @Suppress("DEPRECATION")
+                        wifiScanResults.addAll(it.scanResults.filter { r -> r.SSID.isNotEmpty() })
+                    }
+                }
+                wifiAdapter.notifyDataSetChanged()
+            }
+        }
+    }
+
+    // WiFi 状态广播接收器
+    private val wifiStateReceiver = object : BroadcastReceiver() {
+        @SuppressLint("MissingPermission")
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                WifiManager.NETWORK_STATE_CHANGED_ACTION -> {
+                    val wifiInfo = intent.getParcelableExtra<WifiInfo>(WifiManager.EXTRA_WIFI_INFO)
+                    if (wifiInfo != null && wifiInfo.networkId != -1) {
+                        val ssid = wifiInfo.ssid?.replace("\"", "") ?: ""
+                        if (ssid != "<unknown ssid>" && ssid.isNotEmpty()) {
+                            currentConnectedSsid = ssid
+                            isWifiConnected = true
+                            isWifiConnecting = false
+                            updateWifiStatus()
+                            // 保存已连接的 WiFi
+                            MyApp.getInstance().setApName(ssid)
+                            updateConnectedWifiInfo()
+                            // WiFi连接成功后自动启动绑定应用
+                            launchBoundAppOnWifiConnected()
+                        }
+                    } else if (!isWifiConnecting) {
+                        isWifiConnected = false
+                        updateWifiStatus()
+                    }
+                }
+            }
+        }
+    }
 
     // 监听 BleAutoConnectService 广播，更新 UI 连接状态
     private val btStatusReceiver = object : BroadcastReceiver() {
@@ -88,7 +173,6 @@ class MainActivity : AppCompatActivity() {
                     updateBleStatus("已连接: $name", Color.parseColor("#4CAF50"))
                     if (addr.isNotEmpty()) {
                         MyApp.getInstance().saveDevice(addr)
-                        updateBoundDeviceInfo()
                     }
                     launchBoundAppOnConnect()
                 }
@@ -104,30 +188,6 @@ class MainActivity : AppCompatActivity() {
                     val msg = intent.getStringExtra("msg") ?: return
                     appendLog(msg)
                 }
-                BluetoothDevice.ACTION_FOUND -> {
-                    // 发现蓝牙设备
-                    val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
-                    val rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE)
-                    if (device != null) {
-                        val name = device.name ?: "未知设备"
-                        val address = device.address
-                        appendLog("[蓝牙] 发现设备: $name [$address] RSSI: $rssi")
-                        if (scanResults.none { it.address == device.address }) {
-                            scanResults.add(device)
-                            deviceAdapter.notifyDataSetChanged()
-                        }
-                    }
-                }
-                BluetoothAdapter.ACTION_DISCOVERY_STARTED -> {
-                    appendLog("[蓝牙] 扫描已启动")
-                }
-                BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
-                    appendLog("[蓝牙] 扫描完成，发现 ${scanResults.size} 个设备")
-                    isScanning = false
-                    runOnUiThread {
-                        btnScan?.text = "扫描设备"
-                    }
-                }
             }
         }
     }
@@ -138,14 +198,8 @@ class MainActivity : AppCompatActivity() {
         val allGranted = permissions.entries.all { it.value }
         if (allGranted) {
             initBle()
-            // 如果之前在等待权限后重试扫描，现在执行
-            if (pendingScanAfterPermission) {
-                pendingScanAfterPermission = false
-                performBluetoothScan()
-            }
         } else {
             Toast.makeText(this, "需要蓝牙和位置权限才能使用", Toast.LENGTH_LONG).show()
-            pendingScanAfterPermission = false
         }
     }
 
@@ -156,19 +210,39 @@ class MainActivity : AppCompatActivity() {
         val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         bluetoothAdapter = btManager?.adapter ?: @Suppress("DEPRECATION") BluetoothAdapter.getDefaultAdapter()
 
+        // 初始化 WiFi 管理器
+        wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+
         setupLogPanel()
-        setupRecyclerView()
-        setupScanButton()
+        setupWifiRecyclerView()
         setupAutoConnectSwitch()
         setupBootStartSwitch()
         setupAppBinding()
         setupHotspot()
         setupQuickActions()
         registerBtReceiver()
+        registerWifiReceivers()
         checkPermissions()
-        updateBoundDeviceInfo()
         updateBoundAppInfo()
         updateVersionInfo()
+        updateConnectedWifiInfo()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            unregisterReceiver(wifiScanReceiver)
+            unregisterReceiver(wifiStateReceiver)
+            unregisterReceiver(btStatusReceiver)
+        } catch (e: Exception) {}
+        // 注销网络回调
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                wifiConnectivityCallback?.let { connectivityManager.unregisterNetworkCallback(it) }
+            } catch (e: Exception) {}
+        }
+        handler.removeCallbacksAndMessages(null)
     }
 
     private fun registerBtReceiver() {
@@ -178,11 +252,12 @@ class MainActivity : AppCompatActivity() {
             addAction(BleAutoConnectService.ACTION_BT_DISCONNECTED)
             addAction(BleAutoConnectService.ACTION_BT_CONNECTING)
             addAction("com.acai.auto.LOG")
-            addAction(BluetoothDevice.ACTION_FOUND)
-            addAction(BluetoothAdapter.ACTION_DISCOVERY_STARTED)
-            addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
         }
-        registerReceiver(btStatusReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(btStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(btStatusReceiver, filter)
+        }
     }
 
     private fun checkPermissions() {
@@ -244,23 +319,56 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("WrongConstant")
     private fun isBluetoothEnabledBySettings(): Boolean {
         return try {
-            val result = android.provider.Settings.System.getInt(
+            // 尝试 Global 设置
+            val result = android.provider.Settings.Global.getInt(
                 contentResolver,
-                android.provider.Settings.System.BLUETOOTH_ON,
+                "bluetooth_on",
                 0
             )
             result != 0
         } catch (e: Exception) {
             try {
-                val result = android.provider.Settings.Global.getInt(
+                // 尝试 System 设置
+                val result = android.provider.Settings.System.getInt(
                     contentResolver,
-                    "bluetooth_on",
+                    android.provider.Settings.System.BLUETOOTH_ON,
                     0
                 )
                 result != 0
             } catch (e2: Exception) {
                 false
             }
+        }
+    }
+
+    /**
+     * 通过反射获取BluetoothAdapter的真实状态
+     * 有些设备adapter.isEnabled()返回不准确，需要读取内部状态
+     */
+    private fun isBluetoothActuallyEnabled(): Boolean {
+        val adapter = bluetoothAdapter ?: return false
+        return try {
+            // 方法1: adapter.isEnabled()
+            if (adapter.isEnabled) {
+                // 进一步检查是否是GKUI系统的蓝牙bug
+                // 通过反射获取mService来判断真实状态
+                val mServiceField = adapter.javaClass.getDeclaredField("mService")
+                mServiceField.isAccessible = true
+                val mService = mServiceField.get(adapter)
+                if (mService != null) {
+                    val getStateMethod = mService.javaClass.getMethod("getState")
+                    val state = getStateMethod.invoke(mService) as Int
+                    state == BluetoothAdapter.STATE_ON
+                } else {
+                    // mService为null，说明蓝牙确实没开启
+                    false
+                }
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            // 反射失败时，使用adapter.isEnabled()结果
+            adapter.isEnabled
         }
     }
 
@@ -277,277 +385,42 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateBleStatus(text: String, color: Int) {
-        runOnUiThread {
-            findViewById<TextView>(R.id.tvBleStatus)?.apply {
-                this.text = text
-                setTextColor(color)
-            }
-        }
+        // 蓝牙状态已简化，不再使用UI更新
     }
 
-    private fun setupRecyclerView() {
-        deviceAdapter = DeviceAdapter(scanResults) { device ->
-            val address = device.address
-            val name = device.name ?: address
-            appendLog("[蓝牙] 选中设备: $name [$address]，已保存并启动自动连接")
-            MyApp.getInstance().saveDevice(address)
-            updateBoundDeviceInfo()
-            deviceAdapter.notifyDataSetChanged()
-            // 启动/重启自动连接服务
-            BleAutoConnectService.start(this)
-            Toast.makeText(this, "已保存设备，正在连接: $name", Toast.LENGTH_SHORT).show()
+    private fun setupWifiRecyclerView() {
+        wifiAdapter = WifiAdapter(wifiScanResults) { scanResult ->
+            selectedWifi = scanResult
+            val ssid = if (scanResult.SSID.isNullOrEmpty()) "<未知网络>" else scanResult.SSID
+            val security = getSecurityType(scanResult)
+            appendLog("[WiFi] 选择网络: $ssid ($security)")
+            
+            // 如果是开放网络，直接连接
+            if (security == "开放") {
+                connectToWifi(scanResult, "")
+            } else {
+                // 弹出密码输入对话框
+                showPasswordDialog(scanResult)
+            }
         }
-        findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvDevices)?.apply {
+        findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvWifiList)?.apply {
             layoutManager = LinearLayoutManager(this@MainActivity)
-            adapter = deviceAdapter
+            adapter = wifiAdapter
         }
     }
 
-    private fun setupScanButton() {
-        btnScan = findViewById<android.widget.Button>(R.id.btnScan)
-        val btnBindBluetooth = findViewById<android.widget.Button>(R.id.btnBindBluetooth)
-
-        // 扫描广播已在 registerBtReceiver 中注册 (ACTION_FOUND, ACTION_DISCOVERY_FINISHED)
-
-        btnScan?.setOnClickListener {
-            if (isBtConnected) {
-                // 停止服务断开连接
-                stopService(Intent(this, BleAutoConnectService::class.java))
-                isBtConnected = false
-                updateBleStatus("蓝牙未连接", Color.RED)
-                appendLog("[蓝牙] 已断开连接")
-                return@setOnClickListener
-            }
-
-            if (isScanning) {
-                bluetoothAdapter?.cancelDiscovery()
-                isScanning = false
-                btnScan?.text = "扫描设备"
-                appendLog("[蓝牙] 用户停止扫描")
-                return@setOnClickListener
-            }
-
-            performBluetoothScan()
-        }
-
-        // 绑定蓝牙按钮：直接从已配对设备列表中选择绑定
-        btnBindBluetooth?.setOnClickListener {
-            // 重新获取蓝牙适配器
-            val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            bluetoothAdapter = btManager?.adapter ?: @Suppress("DEPRECATION") BluetoothAdapter.getDefaultAdapter()
-
-            val adapter = bluetoothAdapter
-            if (adapter == null) {
-                Toast.makeText(this, "未检测到蓝牙模块", Toast.LENGTH_SHORT).show()
-                appendLog("[蓝牙] 未检测到蓝牙模块")
-                return@setOnClickListener
-            }
-
-            // 使用双重检测
-            val isEnabledByAdapter = adapter.isEnabled
-            val isEnabledBySettings = isBluetoothEnabledBySettings()
-
-            if (!isEnabledByAdapter && !isEnabledBySettings) {
-                Toast.makeText(this, "请先开启蓝牙", Toast.LENGTH_SHORT).show()
-                appendLog("[蓝牙] 检测到蓝牙未开启，请先开启蓝牙")
-                return@setOnClickListener
-            }
-
-            // 获取已配对设备
-            val bonded = adapter.bondedDevices?.toList() ?: emptyList()
-            if (bonded.isEmpty()) {
-                Toast.makeText(this, "没有已配对的设备，请先扫描并连接", Toast.LENGTH_SHORT).show()
-                appendLog("[蓝牙] 没有已配对设备，请先扫描")
-                return@setOnClickListener
-            }
-
-            // 显示已配对设备选择对话框
-            showBondedDevicePicker(bonded)
+    @SuppressLint("MissingPermission")
+    private fun getSecurityType(scanResult: ScanResult): String {
+        val capabilities = scanResult.capabilities
+        return when {
+            capabilities.contains("WPA3") -> "WPA3"
+            capabilities.contains("WPA2") -> "WPA2"
+            capabilities.contains("WPA") -> "WPA"
+            capabilities.contains("WEP") -> "WEP"
+            else -> "开放"
         }
     }
 
-    /**
-     * 执行蓝牙扫描（提取为独立方法，便于权限授予后重试）
-     */
-    private fun performBluetoothScan() {
-        // 每次点击时重新获取蓝牙适配器，确保状态最新
-        val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        bluetoothAdapter = btManager?.adapter ?: @Suppress("DEPRECATION") BluetoothAdapter.getDefaultAdapter()
-
-        val adapter = bluetoothAdapter
-        if (adapter == null) {
-            Toast.makeText(this, "未检测到蓝牙模块", Toast.LENGTH_SHORT).show()
-            appendLog("[蓝牙] 未检测到蓝牙模块")
-            return
-        }
-
-        // Android 5.1 需要位置权限才能扫描蓝牙
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-                appendLog("[蓝牙] Android 5.1 需要位置权限，正在请求...")
-                pendingScanAfterPermission = true
-                permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION))
-                return
-            }
-        }
-
-        // 使用双重检测：adapter.isEnabled + settings值
-        val isEnabledByAdapter = adapter.isEnabled
-        val isEnabledBySettings = isBluetoothEnabledBySettings()
-        appendLog("[蓝牙] 扫描前状态: adapter=$isEnabledByAdapter, settings=$isEnabledBySettings")
-        appendLog("[蓝牙] API版本: ${Build.VERSION.SDK_INT}, 设备名称: ${adapter.name}")
-
-        if (!isEnabledByAdapter && !isEnabledBySettings) {
-            Toast.makeText(this, "请先开启蓝牙", Toast.LENGTH_SHORT).show()
-            appendLog("[蓝牙] 检测到蓝牙未开启，请先开启蓝牙")
-            return
-        }
-
-        scanResults.clear()
-        deviceAdapter.notifyDataSetChanged()
-        isScanning = true
-        btnScan?.text = "停止扫描"
-        appendLog("[蓝牙] 开始扫描设备...")
-
-        // 先添加已配对设备
-        val bonded = adapter.bondedDevices
-        if (bonded != null) {
-            for (dev in bonded) {
-                if (scanResults.none { it.address == dev.address }) {
-                    scanResults.add(dev)
-                }
-            }
-            deviceAdapter.notifyDataSetChanged()
-            appendLog("[蓝牙] 已配对设备: ${bonded.size} 个")
-            bonded.forEach { dev ->
-                appendLog("[蓝牙]   - ${dev.name ?: "未知"} [${dev.address}]")
-            }
-        }
-
-        // 检查扫描是否正在进行，如果是，先取消
-        if (adapter.isDiscovering) {
-            appendLog("[蓝牙] 正在取消之前的扫描...")
-            adapter.cancelDiscovery()
-        }
-
-        val started = adapter.startDiscovery()
-        appendLog("[蓝牙] startDiscovery() 返回: $started")
-
-        if (!started) {
-            appendLog("[蓝牙] 启动扫描失败，尝试强制启用蓝牙...")
-            // 尝试通过 Settings 强制开启蓝牙
-            try {
-                val success = android.provider.Settings.Global.putInt(
-                    contentResolver,
-                    "bluetooth_on",
-                    1
-                )
-                appendLog("[蓝牙] 强制开启蓝牙设置: $success")
-                if (success) {
-                    // 等待1秒后重试
-                    handler.postDelayed({
-                        val retryStarted = adapter.startDiscovery()
-                        appendLog("[蓝牙] 重试 startDiscovery() 返回: $retryStarted")
-                        if (retryStarted) {
-                            startScanTimeout(adapter)
-                            return@postDelayed
-                        }
-                        // 还是失败，使用反射强制开启
-                        forceEnableBluetooth()
-                    }, 1000)
-                    return
-                }
-            } catch (e: Exception) {
-                appendLog("[蓝牙] 强制开启蓝牙失败: ${e.message}")
-            }
-
-            appendLog("[蓝牙] 启动扫描失败，请检查蓝牙是否正常工作")
-            isScanning = false
-            btnScan?.text = "扫描设备"
-            Toast.makeText(this, "启动扫描失败，请在系统设置中开启蓝牙", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        startScanTimeout(adapter)
-    }
-
-    /**
-     * 反射强制开启蓝牙（作为最后手段）
-     */
-    private fun forceEnableBluetooth() {
-        appendLog("[蓝牙] 尝试反射强制开启蓝牙...")
-        try {
-            val adapter = bluetoothAdapter ?: return
-            val method = adapter.javaClass.getMethod("enable")
-            method.invoke(adapter)
-            appendLog("[蓝牙] 反射调用 enable() 成功")
-
-            // 等待2秒后重试扫描
-            handler.postDelayed({
-                val retryStarted = adapter.startDiscovery()
-                appendLog("[蓝牙] 反射后 startDiscovery() 返回: $retryStarted")
-                if (retryStarted) {
-                    startScanTimeout(adapter)
-                } else {
-                    isScanning = false
-                    btnScan?.text = "扫描设备"
-                    appendLog("[蓝牙] 所有方法均失败，建议手动开启蓝牙")
-                    Toast.makeText(this, "请在系统设置中开启蓝牙后重试", Toast.LENGTH_LONG).show()
-                }
-            }, 2000)
-        } catch (e: Exception) {
-            appendLog("[蓝牙] 反射强制开启蓝牙失败: ${e.message}")
-            isScanning = false
-            btnScan?.text = "扫描设备"
-        }
-    }
-
-    /**
-     * 启动扫描超时定时器
-     */
-    private fun startScanTimeout(adapter: BluetoothAdapter) {
-        handler.postDelayed({
-            if (isScanning) {
-                appendLog("[蓝牙] 扫描超时，自动停止")
-                try {
-                    adapter.cancelDiscovery()
-                } catch (_: Exception) {}
-                isScanning = false
-                btnScan?.text = "扫描设备"
-            }
-        }, 12000)
-    }
-
-    /**
-     * 显示已配对设备选择对话框
-     */
-    private fun showBondedDevicePicker(devices: List<BluetoothDevice>) {
-        if (devices.isEmpty()) return
-
-        val deviceNames = devices.map { it.name ?: it.address }.toTypedArray()
-        val deviceAddresses = devices.map { it.address }
-
-        android.app.AlertDialog.Builder(this)
-            .setTitle("选择要绑定的蓝牙设备")
-            .setItems(deviceNames) { _, which ->
-                val address = deviceAddresses[which]
-                val name = deviceNames[which]
-                // 保存设备并启动自动连接
-                MyApp.getInstance().saveDevice(address)
-                appendLog("[蓝牙] 已绑定设备: $name [$address]")
-                Toast.makeText(this, "已绑定: $name，正在连接...", Toast.LENGTH_SHORT).show()
-                updateBoundDeviceInfo()
-
-                // 启用自动连接并启动服务
-                MyApp.getInstance().setAutoConnectEnabled(true)
-                findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.swAutoConnect)?.isChecked = true
-                BleAutoConnectService.start(this)
-                appendLog("[蓝牙] 已启动自动连接服务")
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
     private fun setupAutoConnectSwitch() {
         val sw = findViewById<SwitchCompat>(R.id.swAutoConnect)
         sw?.apply {
@@ -685,8 +558,9 @@ class MainActivity : AppCompatActivity() {
      * 蓝牙连接成功后自动启动绑定的应用
      */
     /**
-     * 蓝牙连接成功后，检查热点状态是否满足启动条件
-     * 需要同时满足：蓝牙已连接 + 热点已开启，才会启动绑定应用
+     * 蓝牙连接成功后自动启动绑定的应用
+     * 简化逻辑：只要有绑定应用就启动
+     * 注意：目前主要通过热点触发，蓝牙触发作为备用
      */
     private fun launchBoundAppOnConnect() {
         val appName = MyApp.getInstance().getBoundAppName()
@@ -696,380 +570,319 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (!isApEnabled) {
-            appendLog("[绑定] 等待热点开启...")
-            return
-        }
-
+        // 直接启动绑定应用，不再检查热点状态
+        appendLog("[绑定] 蓝牙已连接，自动启动绑定应用...")
         doLaunchBoundApp()
     }
 
     /**
-     * 热点开启成功后，检查蓝牙连接状态是否满足启动条件
+     * WiFi连接成功后，自动启动绑定的应用
      */
-    private fun launchBoundAppOnHotspot() {
+    private fun launchBoundAppOnWifiConnected() {
         val appName = MyApp.getInstance().getBoundAppName()
         val pkg = MyApp.getInstance().getBoundAppPackage()
         if (pkg.isEmpty()) {
+            appendLog("[绑定] 未绑定应用，跳过自动启动")
             return
         }
 
-        if (!isBtConnected) {
-            appendLog("[绑定] 等待蓝牙连接...")
-            return
-        }
-
+        appendLog("[绑定] WiFi已连接，自动启动绑定应用...")
         doLaunchBoundApp()
     }
 
     /**
-     * 实际启动绑定应用（蓝牙+热点均已就绪时调用）
+     * 实际启动绑定应用
      */
     private fun doLaunchBoundApp() {
         val appName = MyApp.getInstance().getBoundAppName()
-        appendLog("[绑定] 蓝牙+热点就绪，正在启动: $appName ...")
-        // 延迟1秒启动，给状态稳定的时间
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            val success = MyApp.getInstance().launchBoundApp()
-            if (success) {
-                appendLog("[绑定] ✅ 已启动应用: $appName")
-            } else {
-                appendLog("[绑定] ❌ 启动应用失败: $appName (应用可能已卸载)")
-                Toast.makeText(this, "启动应用失败，应用可能已卸载", Toast.LENGTH_SHORT).show()
-            }
-        }, 1000)
+        appendLog("[绑定] 正在启动: $appName ...")
+
+        // 立即启动绑定应用，不延迟
+        val success = MyApp.getInstance().launchBoundApp()
+        if (success) {
+            appendLog("[绑定] 已启动应用: $appName")
+        } else {
+            appendLog("[绑定] 启动应用失败: $appName (应用可能已卸载)")
+            Toast.makeText(this, "启动应用失败，应用可能已卸载", Toast.LENGTH_SHORT).show()
+        }
     }
 
-    // ========== WiFi 热点管理 ==========
-
-    @Volatile
-    private var isApEnabled = false
+    // ========== WiFi 连接管理 ==========
 
     private fun setupHotspot() {
         val btnToggle = findViewById<android.widget.Button>(R.id.btnToggleAp)
-        updateApStatus()
+        val btnScanWifi = findViewById<android.widget.Button>(R.id.btnScanWifi)
+        
+        updateWifiStatus()
 
-        // 密码显示/隐藏切换
-        val etPassword = findViewById<EditText>(R.id.etApPassword)
-        val btnTogglePwd = findViewById<android.widget.TextView>(R.id.btnTogglePassword)
-        btnTogglePwd?.setOnClickListener {
-            if (etPassword?.inputType == android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
-                (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)) {
-                etPassword.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-                btnTogglePwd.text = "显示"
-            } else {
-                etPassword?.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-                btnTogglePwd.text = "隐藏"
-            }
-            etPassword?.setSelection(etPassword.text.length)
+        // 扫描WiFi按钮
+        btnScanWifi?.setOnClickListener {
+            scanWifi()
         }
 
         btnToggle?.setOnClickListener {
-            val etName = findViewById<EditText>(R.id.etApName)
-            val etPass = findViewById<EditText>(R.id.etApPassword)
-            val name = etName?.text.toString().trim()
-            val password = etPass?.text.toString().trim()
-
-            if (name.length < 3) {
-                Toast.makeText(this, "热点名称至少3位", Toast.LENGTH_SHORT).show()
+            if (selectedWifi == null) {
+                Toast.makeText(this, "请先选择要连接的WiFi网络", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            if (password.length < 8) {
-                Toast.makeText(this, "热点密码至少8位", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            // 保存热点配置
-            MyApp.getInstance().setApName(name)
-            MyApp.getInstance().setApPassword(password)
-
-            if (!isApEnabled) {
-                enableHotspot(name, password)
+            
+            val ssid = selectedWifi?.SSID ?: ""
+            if (isWifiConnected && currentConnectedSsid == ssid) {
+                // 断开连接
+                disconnectWifi()
             } else {
-                hotspotDisabling = true
-                disableHotspot()
-            }
-        }
-
-        // 自动开启热点：读取已保存的热点配置，如果系统热点未开启则自动启动
-        handler.postDelayed({
-            val savedName = MyApp.getInstance().getApName()
-            val savedPass = MyApp.getInstance().getApPassword()
-            if (savedName.length >= 3 && savedPass.length >= 8 && !isSystemHotspotEnabled()) {
-                hotspotLog("检测到已保存热点配置，自动开启...")
-                enableHotspot(savedName, savedPass)
-            }
-        }, 500)
-    }
-
-    /**
-     * 热点日志输出到日志面板
-     */
-    private fun hotspotLog(msg: String) {
-        android.util.Log.d("Hotspot", msg)
-        appendLog("[热点] $msg")
-    }
-
-    private fun hotspotLogE(msg: String) {
-        android.util.Log.e("Hotspot", msg)
-        appendLog("[热点] ❌ $msg")
-    }
-
-    /**
-     * 开启 WiFi 热点
-     * Android 12+: 先用 SoftApConfiguration 配置 SSID/密码，再用 startTethering
-     * Android 8-11: 用 startTethering 反射
-     * Android 7-: 用 setWifiApEnabled 反射
-     * 所有方法失败后 → 跳转系统热点设置引导用户手动开启
-     */
-    @SuppressLint("PrivateApi")
-    private fun enableHotspot(ssid: String, password: String) {
-        hotspotLog("正在开启热点: $ssid (API ${Build.VERSION.SDK_INT})...")
-
-        try {
-            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-
-            // Android 12+ (API 31): 设置热点配置
-            if (Build.VERSION.SDK_INT >= 31) {
-                try {
-                    val builderClass = Class.forName("android.net.wifi.WifiManager\$SoftApConfiguration\$Builder")
-                    val builder = builderClass.getDeclaredConstructor().newInstance()
-                    val setSsid = builderClass.getMethod("setSsid", String::class.java)
-                    setSsid.invoke(builder, ssid)
-                    val setPassphrase = builderClass.getMethod("setWpa2Passphrase", String::class.java)
-                    setPassphrase.invoke(builder, password)
-                    val buildMethod = builderClass.getMethod("build")
-                    val softApConfig = buildMethod.invoke(builder)
-                    val setConfigMethod = wifiManager.javaClass.getMethod("setSoftApConfiguration", softApConfig.javaClass)
-                    setConfigMethod.invoke(wifiManager, softApConfig)
-                    hotspotLog("SoftApConfiguration 设置成功: $ssid")
-                } catch (e: Exception) {
-                    hotspotLogE("SoftApConfiguration 设置失败: ${e.message}")
+                // 连接WiFi
+                val security = getSecurityType(selectedWifi!!)
+                if (security == "开放") {
+                    connectToWifi(selectedWifi!!, "")
+                } else {
+                    showPasswordDialog(selectedWifi!!)
                 }
             }
-
-            // Android 8+ (API 26): 使用 startTethering
-            if (Build.VERSION.SDK_INT >= 26) {
-                try {
-                    val callbackClass = Class.forName("android.net.wifi.WifiManager\$OnStartTetheringCallback")
-                    val callback = java.lang.reflect.Proxy.newProxyInstance(
-                        callbackClass.classLoader, arrayOf(callbackClass)
-                    ) { _, method, _ ->
-                        if (method?.name == "onTetheringStarted") {
-                            hotspotLog("✅ 热点已开启 (startTethering)")
-                            runOnUiThread {
-                                isApEnabled = true
-                                updateApStatus()
-                                Toast.makeText(this@MainActivity, "热点开启成功", Toast.LENGTH_SHORT).show()
-                                launchBoundAppOnHotspot()
-                            }
-                        } else if (method?.name == "onTetheringFailed") {
-                            hotspotLogE("startTethering 回调失败，引导手动开启...")
-                            runOnUiThread {
-                                Toast.makeText(this@MainActivity, "自动开启失败，请在系统设置中手动开启热点", Toast.LENGTH_LONG).show()
-                                openSystemHotspotSettings()
-                            }
-                        }
-                        null
-                    }
-                    val startMethod = wifiManager.javaClass.getMethod(
-                        "startTethering",
-                        Int::class.javaPrimitiveType,
-                        Boolean::class.javaPrimitiveType,
-                        callbackClass
-                    )
-                    startMethod.invoke(wifiManager, 0, true, callback)
-                    hotspotLog("正在开启热点 (startTethering)...")
-                    updateBleStatus("正在开启热点...", Color.BLUE)
-                    return
-                } catch (e: java.lang.reflect.InvocationTargetException) {
-                    val cause = e.targetException
-                    hotspotLogE("startTethering 权限不足: ${cause?.message ?: e.message}")
-                    runOnUiThread {
-                        Toast.makeText(this, "自动开启热点需要系统权限，请手动开启", Toast.LENGTH_LONG).show()
-                        openSystemHotspotSettings()
-                    }
-                    return
-                } catch (e: Exception) {
-                    hotspotLogE("startTethering 反射失败: ${e.message}")
-                }
-            }
-
-            // 旧版 Android (API < 26): 使用 setWifiApEnabled 反射
-            try {
-                val config = android.net.wifi.WifiConfiguration().apply {
-                    this.SSID = "\"$ssid\""
-                    this.preSharedKey = "\"$password\""
-                    allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.WPA2_PSK)
-                    allowedAuthAlgorithms.set(android.net.wifi.WifiConfiguration.AuthAlgorithm.OPEN)
-                    allowedProtocols.set(android.net.wifi.WifiConfiguration.Protocol.RSN)
-                }
-                val method = wifiManager.javaClass.getMethod(
-                    "setWifiApEnabled",
-                    android.net.wifi.WifiConfiguration::class.java,
-                    Boolean::class.javaPrimitiveType
-                )
-                method.isAccessible = true
-                method.invoke(wifiManager, config, true)
-                // 不立即设 isApEnabled=true，等广播或轮询确认
-                hotspotLog("热点开启中 (setWifiApEnabled)...")
-                Toast.makeText(this, "热点开启中...", Toast.LENGTH_SHORT).show()
-
-                // 轮询检测热点是否真正开启（最多等 10 秒）
-                val handler = android.os.Handler(android.os.Looper.getMainLooper())
-                var pollCount = 0
-                val maxPolls = 20 // 20 * 500ms = 10s
-                val pollRunnable = object : Runnable {
-                    override fun run() {
-                        pollCount++
-                        if (isSystemHotspotEnabled()) {
-                            isApEnabled = true
-                            updateApStatus()
-                            hotspotLog("✅ 热点已开启 (轮询确认)")
-                            Toast.makeText(this@MainActivity, "热点开启成功", Toast.LENGTH_SHORT).show()
-                            launchBoundAppOnHotspot()
-                        } else if (pollCount < maxPolls) {
-                            handler.postDelayed(this, 500)
-                        } else {
-                            hotspotLogE("热点开启超时（10秒未检测到开启）")
-                            updateApStatus()
-                        }
-                    }
-                }
-                handler.postDelayed(pollRunnable, 1000) // 1秒后开始检查
-                return
-            } catch (e: Exception) {
-                hotspotLogE("setWifiApEnabled 失败: ${e.message}")
-            }
-
-            // 所有方法都失败
-            hotspotLog("所有自动开启方法均失败，跳转系统设置...")
-            runOnUiThread {
-                Toast.makeText(this, "自动开启热点失败，请手动开启", Toast.LENGTH_LONG).show()
-                openSystemHotspotSettings()
-            }
-        } catch (e: Exception) {
-            hotspotLogE("enableHotspot 异常: ${e.message}")
-            Toast.makeText(this, "开启热点失败", Toast.LENGTH_SHORT).show()
         }
     }
 
     /**
-     * 关闭 WiFi 热点
+     * 弹出密码输入对话框
      */
-    @SuppressLint("PrivateApi")
-    private fun disableHotspot() {
-        hotspotLog("正在关闭热点...")
-        try {
-            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            if (Build.VERSION.SDK_INT >= 26) {
-                try {
-                    val method = wifiManager.javaClass.getMethod("stopTethering")
-                    method.invoke(wifiManager)
-                    hotspotLog("热点关闭中 (stopTethering)")
-                } catch (e: Exception) {
-                    hotspotLogE("stopTethering 失败: ${e.message}")
-                    // fallback
-                    try {
-                        val method2 = wifiManager.javaClass.getMethod(
-                            "setWifiApEnabled",
-                            android.net.wifi.WifiConfiguration::class.java,
-                            Boolean::class.javaPrimitiveType
-                        )
-                        method2.isAccessible = true
-                        method2.invoke(wifiManager, null, false)
-                        hotspotLog("热点关闭中 (setWifiApEnabled fallback)")
-                    } catch (e2: Exception) {
-                        hotspotLogE("setWifiApEnabled fallback 也失败: ${e2.message}")
-                    }
+    private fun showPasswordDialog(scanResult: ScanResult) {
+        val ssid = if (scanResult.SSID.isNullOrEmpty()) "<未知网络>" else scanResult.SSID
+        
+        val editText = android.widget.EditText(this).apply {
+            hint = "输入WiFi密码"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setPadding(48, 32, 48, 32)
+        }
+        
+        android.app.AlertDialog.Builder(this)
+            .setTitle("连接 $ssid")
+            .setView(editText)
+            .setPositiveButton("连接") { _, _ ->
+                val password = editText.text.toString().trim()
+                if (password.isNotEmpty()) {
+                    connectToWifi(scanResult, password)
+                } else {
+                    Toast.makeText(this, "密码不能为空", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun scanWifi() {
+        wifiManager?.let { wm ->
+            if (!wm.isWifiEnabled) {
+                appendLog("[WiFi] WiFi未开启，正在开启...")
+                wm.isWifiEnabled = true
+            }
+            
+            wifiScanResults.clear()
+            
+            // Android 5.1/6.0 需要特殊处理
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
+                appendLog("[WiFi] Android 5.1/6.0 使用系统扫描结果...")
+                // 直接获取系统已有的扫描结果
+                @Suppress("DEPRECATION")
+                val results = wm.scanResults.filter { it.SSID.isNotEmpty() }
+                if (results.isNotEmpty()) {
+                    wifiScanResults.addAll(results)
+                    wifiAdapter.notifyDataSetChanged()
+                    appendLog("[WiFi] 找到 ${results.size} 个网络")
+                } else {
+                    // 如果没有扫描结果，跳转系统WiFi设置
+                    appendLog("[WiFi] 无扫描结果，跳转系统设置...")
+                    openWifiSettings()
                 }
             } else {
-                val method = wifiManager.javaClass.getMethod(
-                    "setWifiApEnabled",
-                    android.net.wifi.WifiConfiguration::class.java,
-                    Boolean::class.javaPrimitiveType
-                )
-                method.isAccessible = true
-                method.invoke(wifiManager, null, false)
-                hotspotLog("热点关闭中 (setWifiApEnabled)")
+                // Android 7.0+ 尝试主动扫描
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val success = wm.startScan()
+                    appendLog("[WiFi] 扫描${if (success) "启动成功" else "启动失败"}...")
+                } else {
+                    @Suppress("DEPRECATION")
+                    val success = wm.startScan()
+                    appendLog("[WiFi] 扫描${if (success) "启动成功" else "启动失败"}...")
+                }
             }
-            isApEnabled = false
-            updateApStatus()
-            Toast.makeText(this, "热点已关闭", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            hotspotLogE("关闭热点失败: ${e.message}")
-            Toast.makeText(this, "关闭热点失败", Toast.LENGTH_SHORT).show()
         }
     }
 
-    /**
-     * 跳转系统热点设置页面，引导用户手动开启
-     * 注意：不触发 onRestart/onResume 中的自动启动应用逻辑
-     */
-    private var hotspotSettingsOpened = false
-    /**
-     * 标记用户是否正在主动关闭热点，期间不触发 launchBoundAppOnHotspot
-     */
-    private var hotspotDisabling = false
-
-    private fun openSystemHotspotSettings() {
+    @SuppressLint("MissingPermission")
+    private fun connectToWifi(scanResult: ScanResult, password: String) {
+        val ssid = if (scanResult.SSID.isNullOrEmpty()) "<未知网络>" else scanResult.SSID
+        val security = getSecurityType(scanResult)
+        appendLog("[WiFi] 正在连接: $ssid...")
+        isWifiConnecting = true
+        updateWifiStatus()
+        
         try {
-            hotspotSettingsOpened = true
-            val intent = Intent("android.settings.TETHER_SETTINGS")
-            startActivity(intent)
-            hotspotLog("已跳转系统热点设置页面")
-        } catch (e: Exception) {
-            hotspotLogE("跳转系统设置失败: ${e.message}")
-            // fallback: 跳转 WiFi 设置
-            try {
-                hotspotSettingsOpened = true
-                startActivity(Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS))
-            } catch (_: Exception) {}
-        }
-    }
-
-    /**
-     * 通过反射读取系统真实热点状态
-     * @return true = 已开启, false = 已关闭
-     */
-    @SuppressLint("PrivateApi")
-    private fun isSystemHotspotEnabled(): Boolean {
-        return try {
-            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val method = wifiManager.javaClass.getMethod("isWifiApEnabled")
-            method.invoke(wifiManager) as? Boolean ?: false
-        } catch (e: Exception) {
-            // API 31+ 可能没有 isWifiApEnabled，尝试 getSoftApConfiguration
-            try {
-                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                val method = wifiManager.javaClass.getMethod("getSoftApConfiguration")
-                val config = method.invoke(wifiManager)
-                config != null
-            } catch (_: Exception) {
-                false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10+ 使用 WifiNetworkSuggestion
+                val suggestion = WifiNetworkSuggestion.Builder()
+                    .setSsid(ssid)
+                    .apply {
+                        if (security != "开放") {
+                            setWpa2Passphrase(password)
+                        }
+                    }
+                    .build()
+                
+                val status = wifiManager?.addNetworkSuggestions(listOf(suggestion))
+                appendLog("[WiFi] addNetworkSuggestions: $status")
+                
+                if (status == android.net.wifi.WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS) {
+                    Toast.makeText(this, "请在系统弹窗中选择连接", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "添加网络建议失败: $status", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                // Android 9 及以下使用传统方式
+                @Suppress("DEPRECATION")
+                connectWifiLegacy(scanResult, password)
             }
+        } catch (e: Exception) {
+            appendLog("[WiFi] 连接失败: ${e.message}")
+            Toast.makeText(this, "连接失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+        
+        isWifiConnecting = false
+        updateWifiStatus()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun connectWifiLegacy(scanResult: ScanResult, password: String) {
+        try {
+            val ssid = scanResult.SSID
+            val config = WifiConfiguration().apply {
+                this.SSID = "\"$ssid\""
+                allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA2_PSK)
+                preSharedKey = "\"$password\""
+            }
+            
+            val netId = wifiManager?.addNetwork(config) ?: -1
+            if (netId != -1) {
+                wifiManager?.enableNetwork(netId, true)
+                wifiManager?.reconnect()
+                appendLog("[WiFi] 正在连接: $ssid (netId=$netId)")
+                
+                // 保存连接信息
+                MyApp.getInstance().setApName(ssid)
+                MyApp.getInstance().setApPassword(password)
+                updateConnectedWifiInfo()
+            } else {
+                appendLog("[WiFi] 添加网络配置失败")
+                Toast.makeText(this, "添加网络配置失败", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            appendLog("[WiFi] 连接失败: ${e.message}")
+            Toast.makeText(this, "连接失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun updateApStatus() {
+    @SuppressLint("MissingPermission")
+    private fun disconnectWifi() {
+        try {
+            wifiManager?.let { wm ->
+                @Suppress("DEPRECATION")
+                val currentNetId = wm.connectionInfo.networkId
+                if (currentNetId != -1) {
+                    wm.disableNetwork(currentNetId)
+                    @Suppress("DEPRECATION")
+                    wm.disconnect()
+                    appendLog("[WiFi] 已断开连接")
+                }
+            }
+            isWifiConnected = false
+            currentConnectedSsid = ""
+            updateWifiStatus()
+            updateConnectedWifiInfo()
+        } catch (e: Exception) {
+            appendLog("[WiFi] 断开连接失败: ${e.message}")
+        }
+    }
+
+    private fun updateWifiStatus() {
+        val tvStatus = findViewById<TextView>(R.id.tvApStatus)
+        val btnToggle = findViewById<android.widget.Button>(R.id.btnToggleAp)
+        
         runOnUiThread {
-            // 从系统读取真实热点状态（覆盖手动设置的 isApEnabled）
-            val systemEnabled = isSystemHotspotEnabled()
-            val wasEnabled = isApEnabled
-            if (systemEnabled != isApEnabled) {
-                isApEnabled = systemEnabled
-                hotspotLog("检测到系统热点状态变化: ${if (systemEnabled) "已开启" else "已关闭"}")
+            when {
+                isWifiConnecting -> {
+                    tvStatus?.text = "连接中..."
+                    tvStatus?.setTextColor(Color.parseColor("#FF9800"))
+                    btnToggle?.text = "取消连接"
+                }
+                isWifiConnected -> {
+                    tvStatus?.text = "已连接: $currentConnectedSsid"
+                    tvStatus?.setTextColor(Color.parseColor("#4CAF50"))
+                    btnToggle?.text = "断开连接"
+                }
+                else -> {
+                    tvStatus?.text = "未连接"
+                    tvStatus?.setTextColor(Color.RED)
+                    btnToggle?.text = "连接WiFi"
+                }
             }
-            val tvStatus = findViewById<TextView>(R.id.tvApStatus)
-            val btnToggle = findViewById<android.widget.Button>(R.id.btnToggleAp)
-            tvStatus?.text = if (isApEnabled) "热点已开启" else "热点未开启"
-            tvStatus?.setTextColor(if (isApEnabled) Color.parseColor("#4CAF50") else Color.RED)
-            btnToggle?.text = if (isApEnabled) "关闭热点" else "开启热点"
-            // 热点从关闭变为开启时，检查是否可以启动绑定应用
-            // 但如果是用户主动关闭热点后的状态抖动，不触发
-            if (!wasEnabled && isApEnabled && !hotspotDisabling) {
-                launchBoundAppOnHotspot()
+        }
+    }
+
+    private fun updateConnectedWifiInfo() {
+        val tvConnectedWifi = findViewById<TextView>(R.id.tvConnectedWifi)
+        val savedSsid = MyApp.getInstance().getApName()
+        
+        if (savedSsid.isNotEmpty() && savedSsid != "GKAuto_Hotspot") {
+            tvConnectedWifi?.text = "已绑定: $savedSsid"
+        } else {
+            tvConnectedWifi?.text = "已绑定: 无"
+        }
+    }
+
+    private fun registerWifiReceivers() {
+        // 注册WiFi扫描广播
+        val scanFilter = IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(wifiScanReceiver, scanFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(wifiScanReceiver, scanFilter)
+        }
+        
+        // 注册WiFi状态广播
+        val stateFilter = IntentFilter(WifiManager.NETWORK_STATE_CHANGED_ACTION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(wifiStateReceiver, stateFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(wifiStateReceiver, stateFilter)
+        }
+        
+        // 注册网络回调 (Android 10+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                val request = NetworkRequest.Builder()
+                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                    .build()
+                wifiConnectivityCallback?.let { 
+                    connectivityManager.registerNetworkCallback(request, it)
+                }
+            } catch (e: Exception) {
+                appendLog("[WiFi] 注册网络回调失败: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * 跳转系统WiFi设置页面
+     */
+    private fun openWifiSettings() {
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)
+            startActivity(intent)
+        } catch (e: Exception) {
+            appendLog("[快捷] 打开WiFi设置失败: ${e.message}")
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_SETTINGS))
+            } catch (_: Exception) {}
         }
     }
 
@@ -1102,16 +915,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateBoundDeviceInfo() {
-        val devices = MyApp.getInstance().getSavedDevices()
-        val tvBound = findViewById<TextView>(R.id.tvBoundDevice)
-        tvBound?.text = if (devices.isEmpty()) {
-            "已绑定设备: 无"
-        } else {
-            "已绑定设备: ${devices.joinToString(", ")}"
-        }
-    }
-
     // ========== 快捷操作按钮 ==========
 
     private fun setupQuickActions() {
@@ -1140,10 +943,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 打开热点设置
+        // 打开WiFi设置
         findViewById<android.widget.Button>(R.id.btnOpenHotspot)?.setOnClickListener {
-            openSystemHotspotSettings()
-            appendLog("[快捷] 已打开热点设置")
+            openWifiSettings()
+            appendLog("[快捷] 已打开WiFi设置")
         }
 
         // 打开绑定应用（底部快捷按钮）
@@ -1213,15 +1016,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        updateApStatus()
-        updateBoundDeviceInfo()
+        updateWifiStatus()
         updateBoundAppInfo()
-        hotspotSettingsOpened = false
-    }
-
-    override fun onDestroy() {
-        try { unregisterReceiver(btStatusReceiver) } catch (_: Exception) {}
-        handler.removeCallbacksAndMessages(null)
-        super.onDestroy()
     }
 }

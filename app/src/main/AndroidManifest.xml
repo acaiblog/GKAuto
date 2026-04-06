@@ -21,6 +21,9 @@
     <uses-permission android:name="android.permission.TETHER_PRIVILEGED" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
+    <!-- 系统权限 - 需要系统签名或系统应用 -->
+    <uses-permission android:name="android.permission.BLUETOOTH_PRIVILEGED" />
+
     <uses-feature
         android:name="android.hardware.bluetooth_le"
         android:required="false" />
@@ -45,6 +48,17 @@
             android:screenOrientation="landscape"
             android:resizeableActivity="false"
             android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 蓝牙权限测试 Activity -->
+        <activity
+            android:name=".bttest.BtTestActivity"
+            android:exported="true"
+            android:label="蓝牙权限测试">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

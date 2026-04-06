@@ -12,6 +12,7 @@ class MyApp : Application() {
         const val BLE_AUTO = "BLE_AUTO"
         private const val PREFS_NAME = "ble_devices"
         private const val KEY_DEVICE_LIST = "device_list"
+        private const val KEY_LAST_DEVICE = "last_connected_device"
         private const val KEY_AUTO_CONNECT = "auto_connect_enabled"
         private const val KEY_BOOT_START = "boot_start_enabled"
         private const val KEY_AP_NAME = "ap_name"
@@ -51,12 +52,41 @@ class MyApp : Application() {
             current.add(macAddress)
             prefs.edit().putString(KEY_DEVICE_LIST, current.joinToString(",")).apply()
         }
+        // 同时保存为最后连接的设备
+        setLastConnectedDevice(macAddress)
     }
 
     fun removeDevice(macAddress: String) {
         val current = getSavedDevices().toMutableList()
         current.remove(macAddress)
         prefs.edit().putString(KEY_DEVICE_LIST, current.joinToString(",")).apply()
+        // 如果删除的是最后连接的设备，清除记录
+        if (getLastConnectedDevice() == macAddress) {
+            clearLastConnectedDevice()
+        }
+    }
+
+    // ========== 最后连接设备 ==========
+
+    /**
+     * 获取最后成功连接的设备 MAC 地址
+     */
+    fun getLastConnectedDevice(): String? {
+        return prefs.getString(KEY_LAST_DEVICE, null)
+    }
+
+    /**
+     * 保存最后成功连接的设备 MAC 地址
+     */
+    fun setLastConnectedDevice(macAddress: String) {
+        prefs.edit().putString(KEY_LAST_DEVICE, macAddress).apply()
+    }
+
+    /**
+     * 清除最后连接设备记录
+     */
+    fun clearLastConnectedDevice() {
+        prefs.edit().remove(KEY_LAST_DEVICE).apply()
     }
 
     // ========== 自动连接 ==========

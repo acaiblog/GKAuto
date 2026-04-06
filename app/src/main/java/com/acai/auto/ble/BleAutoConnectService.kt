@@ -37,8 +37,11 @@ class BleAutoConnectService : Service() {
         private const val TAG = "BleAutoConnectSvc"
         private const val CHANNEL_ID = "ble_auto"
         private const val NOTIFICATION_ID = 1001
-        private const val MAX_RETRY = 10
-        private const val RETRY_INTERVAL_MS = 8000L
+
+        // 指数退避重连配置
+        private const val MAX_RETRY = 8
+        private val RETRY_INTERVALS = longArrayOf(2000, 4000, 6000, 10000, 15000, 20000, 30000, 60000)
+        private const val INITIAL_RETRY_INTERVAL_MS = 2000L
 
         // 广播 Action（供 MainActivity 监听更新 UI）
         const val ACTION_BT_CONNECTED    = "com.acai.auto.BT_CONNECTED"
@@ -224,11 +227,31 @@ class BleAutoConnectService : Service() {
             return
         }
 
-        // 1. 优先检查已配对设备
         val savedMacs = app.getSavedDevices()
+        if (savedMacs.isEmpty()) {
+            log("没有已保存的设备")
+            return
+        }
+
+        // 1. 优先检查上次成功的设备
+        val lastDeviceMac = app.getLastConnectedDevice()
+        if (lastDeviceMac != null && lastDeviceMac in savedMacs) {
+            val bonded = adapter.bondedDevices ?: emptySet()
+            for (device in bonded) {
+                if (device.address == lastDeviceMac) {
+                    log("优先连接上次成功的设备: ${device.name} [${device.address}]")
+                    targetDevice = device
+                    connectToDevice(device)
+                    return
+                }
+            }
+        }
+
+        // 2. 检查其他已配对设备
         val bonded = adapter.bondedDevices ?: emptySet()
         for (device in bonded) {
             if (savedMacs.contains(device.address) || isTargetDevice(device)) {
+                if (device.address == lastDeviceMac) continue  // 已经尝试过了
                 log("在已配对列表中找到目标设备: ${device.name} [${device.address}]")
                 targetDevice = device
                 connectToDevice(device)
@@ -236,7 +259,7 @@ class BleAutoConnectService : Service() {
             }
         }
 
-        // 2. 扫描发现
+        // 3. 扫描发现
         log("未在已配对设备中找到目标，开始扫描 (第 ${retryCount + 1}/$MAX_RETRY 次)")
         startDiscovery()
     }
@@ -346,10 +369,17 @@ class BleAutoConnectService : Service() {
 
     private fun scheduleRetry() {
         retryCount++
-        if (retryCount >= MAX_RETRY) return
-        log("${RETRY_INTERVAL_MS / 1000}秒后重试 ($retryCount/$MAX_RETRY)")
+        if (retryCount >= MAX_RETRY) {
+            log("已达最大重试次数 ($MAX_RETRY)，停止自动重连")
+            updateNotification("连接失败，请手动重试")
+            return
+        }
+        // 使用指数退避策略
+        val delayMs = RETRY_INTERVALS.getOrElse(retryCount - 1) { RETRY_INTERVALS.last() }
+        val delaySeconds = delayMs / 1000
+        log("${delaySeconds}秒后重试 ($retryCount/$MAX_RETRY)...")
         updateNotification("重试中 ($retryCount/$MAX_RETRY)...")
-        handler.postDelayed({ startConnectFlow() }, RETRY_INTERVAL_MS)
+        handler.postDelayed({ startConnectFlow() }, delayMs)
     }
 
     private fun isTargetDevice(device: BluetoothDevice): Boolean {
@@ -378,7 +408,11 @@ class BleAutoConnectService : Service() {
             addAction(BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED)
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
         }
-        registerReceiver(btReceiver, filter)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(btReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(btReceiver, filter)
+        }
     }
 
     private fun unregisterReceivers() {
